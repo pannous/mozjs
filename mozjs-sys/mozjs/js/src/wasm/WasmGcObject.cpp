@@ -524,6 +524,47 @@ bool WasmGcObject::isRuntimeSubtypeOf(
 bool WasmGcObject::obj_newEnumerate(JSContext* cx, HandleObject obj,
                                     MutableHandleIdVector properties,
                                     bool enumerableOnly) {
+  fprintf(stderr, "[WASM-GC-DEBUG] obj_newEnumerate CALLED!\n");
+  fflush(stderr);
+
+  // Enumerate struct fields as numeric indices
+  Rooted<WasmGcObject*> gcObj(cx, &obj->as<WasmGcObject>());
+
+  if (gcObj->is<WasmStructObject>()) {
+    const WasmStructObject& structObj = gcObj->as<WasmStructObject>();
+    const wasm::StructType& structType = structObj.typeDef().structType();
+    uint32_t numFields = structType.fields_.length();
+
+    fprintf(stderr, "[WASM-GC-DEBUG] Enumerating %u struct fields\n", numFields);
+    fflush(stderr);
+
+    // Add each field index as a property
+    for (uint32_t i = 0; i < numFields; i++) {
+      if (!properties.append(PropertyKey::Int(i))) {
+        return false;
+      }
+      fprintf(stderr, "[WASM-GC-DEBUG] Added property index %u\n", i);
+      fflush(stderr);
+    }
+    return true;
+  }
+
+  if (gcObj->is<WasmArrayObject>()) {
+    const WasmArrayObject& arrayObj = gcObj->as<WasmArrayObject>();
+    uint32_t numElements = arrayObj.numElements_;
+
+    fprintf(stderr, "[WASM-GC-DEBUG] Enumerating %u array elements\n", numElements);
+    fflush(stderr);
+
+    // Add each element index as a property
+    for (uint32_t i = 0; i < numElements; i++) {
+      if (!properties.append(PropertyKey::Int(i))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   return true;
 }
 
