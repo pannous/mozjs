@@ -106,10 +106,15 @@ inline bool HasProperty(JSContext* cx, JS::Handle<JSObject*> obj,
 inline bool GetProperty(JSContext* cx, JS::Handle<JSObject*> obj,
                         JS::Handle<JS::Value> receiver, JS::Handle<jsid> id,
                         JS::MutableHandle<JS::Value> vp) {
-  if (GetPropertyOp op = obj->getOpsGetProperty()) {
+  GetPropertyOp op = obj->getOpsGetProperty();
+  if (op) {
+    fprintf(stderr, "[SPIDERMONKEY-DEBUG] GetProperty: Found custom getProperty op, calling it!\n");
+    fflush(stderr);
     return op(cx, obj, receiver, id, vp);
   }
 
+  fprintf(stderr, "[SPIDERMONKEY-DEBUG] GetProperty: No custom op, using NativeGetProperty\n");
+  fflush(stderr);
   return NativeGetProperty(cx, obj.as<NativeObject>(), receiver, id, vp);
 }
 
