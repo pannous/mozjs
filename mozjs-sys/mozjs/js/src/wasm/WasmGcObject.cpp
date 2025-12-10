@@ -197,6 +197,39 @@ bool WasmGcObject::obj_hasProperty(JSContext* cx, HandleObject obj, HandleId id,
 bool WasmGcObject::obj_getProperty(JSContext* cx, HandleObject obj,
                                    HandleValue receiver, HandleId id,
                                    MutableHandleValue vp) {
+  // Enable direct property access to WASM GC struct fields from JavaScript
+  Rooted<WasmGcObject*> gcObj(cx, &obj->as<WasmGcObject>());
+  PropOffset offset;
+  StorageType type;
+
+  // Try to look up the property as a struct field or array index
+  if (!lookUpProperty(cx, gcObj, id, &offset, &type)) {
+    // Property not found or error - return undefined
+    vp.setUndefined();
+    return true;
+  }
+
+  // Check if the type is exposable to JavaScript
+  if (!type.isExposable()) {
+    vp.setUndefined();
+    return true;
+  }
+
+  // Read the field value based on object type
+  if (gcObj->is<WasmStructObject>()) {
+    WasmStructObject& structObj = gcObj->as<WasmStructObject>();
+    MOZ_RELEASE_ASSERT(structObj.kind() == TypeDefKind::Struct);
+    MOZ_RELEASE_ASSERT(offset.get() + type.size() <=
+                       structObj.typeDef().structType().size_);
+    return ToJSValue(cx, structObj.fieldOffsetToAddress(type, offset.get()),
+                     type, vp);
+  }
+
+  if (gcObj->is<WasmArrayObject>()) {
+    const WasmArrayObject& arrayObj = gcObj->as<WasmArrayObject>();
+    return ToJSValue(cx, arrayObj.data_ + offset.get(), type, vp);
+  }
+
   vp.setUndefined();
   return true;
 }
