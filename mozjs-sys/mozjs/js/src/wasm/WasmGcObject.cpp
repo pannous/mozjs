@@ -237,9 +237,84 @@ bool WasmGcObject::obj_getProperty(JSContext* cx, HandleObject obj,
 bool WasmGcObject::obj_setProperty(JSContext* cx, HandleObject obj, HandleId id,
                                    HandleValue v, HandleValue receiver,
                                    ObjectOpResult& result) {
-  JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                            JSMSG_WASM_MODIFIED_GC_OBJECT);
-  return false;
+  // Enable direct property write access to WASM GC struct fields from JavaScript
+  Rooted<WasmGcObject*> gcObj(cx, &obj->as<WasmGcObject>());
+  PropOffset offset;
+  StorageType type;
+
+  // Try to look up the property as a struct field or array index
+  if (!lookUpProperty(cx, gcObj, id, &offset, &type)) {
+    // Property not found - report error
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_WASM_MODIFIED_GC_OBJECT);
+    return false;
+  }
+
+  // Check if the type is exposable and mutable
+  if (!type.isExposable()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_WASM_BAD_VAL_TYPE);
+    return false;
+  }
+
+  // Only handle structs for now (arrays need bounds checking)
+  if (!gcObj->is<WasmStructObject>()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_WASM_MODIFIED_GC_OBJECT);
+    return false;
+  }
+
+  WasmStructObject& structObj = gcObj->as<WasmStructObject>();
+  uint8_t* fieldAddr = structObj.fieldOffsetToAddress(type, offset.get());
+
+  // Convert JavaScript value to appropriate type and write to field
+  switch (type.kind()) {
+    case StorageType::I8:
+    case StorageType::I16:
+    case StorageType::I32: {
+      int32_t i32val;
+      if (!JS::ToInt32(cx, v, &i32val)) {
+        return false;
+      }
+      if (type.kind() == StorageType::I8) {
+        *((uint8_t*)fieldAddr) = i32val;
+      } else if (type.kind() == StorageType::I16) {
+        *((uint16_t*)fieldAddr) = i32val;
+      } else {
+        *((uint32_t*)fieldAddr) = i32val;
+      }
+      break;
+    }
+    case StorageType::I64: {
+      // I64 requires special handling - for now reject it
+      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                JSMSG_WASM_BAD_I64_TYPE);
+      return false;
+    }
+    case StorageType::F32: {
+      double dval;
+      if (!JS::ToNumber(cx, v, &dval)) {
+        return false;
+      }
+      *((float*)fieldAddr) = static_cast<float>(dval);
+      break;
+    }
+    case StorageType::F64: {
+      double dval;
+      if (!JS::ToNumber(cx, v, &dval)) {
+        return false;
+      }
+      *((double*)fieldAddr) = dval;
+      break;
+    }
+    default:
+      // V128, Ref types not yet supported
+      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                JSMSG_WASM_BAD_VAL_TYPE);
+      return false;
+  }
+
+  return result.succeed();
 }
 
 bool WasmGcObject::obj_getOwnPropertyDescriptor(
