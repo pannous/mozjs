@@ -175,6 +175,8 @@ const ObjectOps WasmGcObject::objectOps_ = {
 bool WasmGcObject::obj_lookupProperty(JSContext* cx, HandleObject obj,
                                       HandleId id, MutableHandleObject objp,
                                       PropertyResult* propp) {
+  // For WASM GC objects, property lookup is handled via obj_hasProperty and obj_getProperty
+  // We report not found here, and let the other hooks handle the actual field access
   objp.set(nullptr);
   propp->setNotFound();
   return true;
@@ -190,7 +192,12 @@ bool WasmGcObject::obj_defineProperty(JSContext* cx, HandleObject obj,
 
 bool WasmGcObject::obj_hasProperty(JSContext* cx, HandleObject obj, HandleId id,
                                    bool* foundp) {
-  *foundp = false;
+  // Check if this is a valid field index for the GC object
+  Rooted<WasmGcObject*> gcObj(cx, &obj->as<WasmGcObject>());
+  PropOffset offset;
+  StorageType type;
+
+  *foundp = lookUpProperty(cx, gcObj, id, &offset, &type);
   return true;
 }
 
