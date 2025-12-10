@@ -175,6 +175,8 @@ const ObjectOps WasmGcObject::objectOps_ = {
 bool WasmGcObject::obj_lookupProperty(JSContext* cx, HandleObject obj,
                                       HandleId id, MutableHandleObject objp,
                                       PropertyResult* propp) {
+  fprintf(stderr, "[WASM-GC-DEBUG] obj_lookupProperty CALLED!\n");
+
   // Check if this is a valid field index for the GC object
   Rooted<WasmGcObject*> gcObj(cx, &obj->as<WasmGcObject>());
   PropOffset offset;
@@ -182,12 +184,14 @@ bool WasmGcObject::obj_lookupProperty(JSContext* cx, HandleObject obj,
 
   if (lookUpProperty(cx, gcObj, id, &offset, &type)) {
     // Property exists - mark as computed/proxy property
+    fprintf(stderr, "[WASM-GC-DEBUG] obj_lookupProperty: Property FOUND, setting as proxy property\n");
     objp.set(obj);
     propp->setProxyProperty();
     return true;
   }
 
   // Property not found
+  fprintf(stderr, "[WASM-GC-DEBUG] obj_lookupProperty: Property NOT FOUND\n");
   objp.set(nullptr);
   propp->setNotFound();
   return true;
@@ -215,6 +219,8 @@ bool WasmGcObject::obj_hasProperty(JSContext* cx, HandleObject obj, HandleId id,
 bool WasmGcObject::obj_getProperty(JSContext* cx, HandleObject obj,
                                    HandleValue receiver, HandleId id,
                                    MutableHandleValue vp) {
+  fprintf(stderr, "[WASM-GC-DEBUG] obj_getProperty CALLED!\n");
+
   // Enable direct property access to WASM GC struct fields from JavaScript
   Rooted<WasmGcObject*> gcObj(cx, &obj->as<WasmGcObject>());
   PropOffset offset;
@@ -356,9 +362,53 @@ bool WasmGcObject::lookUpProperty(JSContext* cx, Handle<WasmGcObject*> obj,
     case wasm::TypeDefKind::Struct: {
       const auto& structType = obj->typeDef().structType();
       uint32_t index;
-      if (!IdIsIndex(id, &index)) {
-        return false;
+
+      // Try multiple approaches to convert jsid to index:
+      // 1. IdIsIndex - for numeric indices
+      // 2. Convert to string and parse - for string property names like "0"
+      // 3. Try JS::ToUint32 - for general value conversion
+
+      fprintf(stderr, "[WASM-GC-DEBUG] lookUpProperty called for struct\n");
+
+      if (IdIsIndex(id, &index)) {
+        // Approach 1: Direct numeric index
+        fprintf(stderr, "[WASM-GC-DEBUG] Approach 1: IdIsIndex succeeded, index=%u\n", index);
+      } else if (id.isString()) {
+        fprintf(stderr, "[WASM-GC-DEBUG] Approach 2: Trying string parsing\n");
+        // Approach 2: String property like "0", "1", etc.
+        JSLinearString* str = id.toLinearString();
+        if (!str) {
+          return false;
+        }
+        // Try to parse the string as a number
+        JS::UniqueChars chars = JS_EncodeStringToUTF8(cx, JS::RootedString(cx, str));
+        if (!chars) {
+          return false;
+        }
+        char* end;
+        long parsed = strtol(chars.get(), &end, 10);
+        if (*end != '\0' || parsed < 0) {
+          return false;  // Not a valid index
+        }
+        index = static_cast<uint32_t>(parsed);
+        fprintf(stderr, "[WASM-GC-DEBUG] Approach 2: String parsing succeeded, index=%u\n", index);
+      } else {
+        // Approach 3: Try converting the id to a value and then to uint32
+        fprintf(stderr, "[WASM-GC-DEBUG] Approach 3: Trying JS::ToUint32\n");
+        JS::RootedValue idVal(cx);
+        if (!JS_IdToValue(cx, id, &idVal)) {
+          fprintf(stderr, "[WASM-GC-DEBUG] Approach 3: JS_IdToValue failed\n");
+          return false;
+        }
+        if (!JS::ToUint32(cx, idVal, &index)) {
+          fprintf(stderr, "[WASM-GC-DEBUG] Approach 3: JS::ToUint32 failed\n");
+          return false;
+        }
+        fprintf(stderr, "[WASM-GC-DEBUG] Approach 3: JS::ToUint32 succeeded, index=%u\n", index);
       }
+
+      fprintf(stderr, "[WASM-GC-DEBUG] Final index=%u, fields_.length()=%zu\n", index, structType.fields_.length());
+
       if (index >= structType.fields_.length()) {
         JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                  JSMSG_WASM_OUT_OF_BOUNDS);
@@ -372,9 +422,37 @@ bool WasmGcObject::lookUpProperty(JSContext* cx, Handle<WasmGcObject*> obj,
       const auto& arrayType = obj->typeDef().arrayType();
 
       uint32_t index;
-      if (!IdIsIndex(id, &index)) {
-        return false;
+
+      // Same three approaches for arrays
+      if (IdIsIndex(id, &index)) {
+        // Approach 1: Direct numeric index
+      } else if (id.isString()) {
+        // Approach 2: String property
+        JSLinearString* str = id.toLinearString();
+        if (!str) {
+          return false;
+        }
+        JS::UniqueChars chars = JS_EncodeStringToUTF8(cx, JS::RootedString(cx, str));
+        if (!chars) {
+          return false;
+        }
+        char* end;
+        long parsed = strtol(chars.get(), &end, 10);
+        if (*end != '\0' || parsed < 0) {
+          return false;
+        }
+        index = static_cast<uint32_t>(parsed);
+      } else {
+        // Approach 3: Value conversion
+        JS::RootedValue idVal(cx);
+        if (!JS_IdToValue(cx, id, &idVal)) {
+          return false;
+        }
+        if (!JS::ToUint32(cx, idVal, &index)) {
+          return false;
+        }
       }
+
       uint32_t numElements = obj->as<WasmArrayObject>().numElements_;
       if (index >= numElements) {
         JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
