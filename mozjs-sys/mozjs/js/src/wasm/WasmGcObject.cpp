@@ -286,9 +286,9 @@ bool WasmGcObject::obj_setProperty(JSContext* cx, HandleObject obj, HandleId id,
       break;
     }
     case StorageType::I64: {
-      // I64 requires special handling - for now reject it
+      // I64 requires special handling (BigInt) - for now reject it
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                JSMSG_WASM_BAD_I64_TYPE);
+                                JSMSG_WASM_BAD_VAL_TYPE);
       return false;
     }
     case StorageType::F32: {
