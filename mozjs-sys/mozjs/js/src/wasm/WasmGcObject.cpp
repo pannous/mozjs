@@ -223,6 +223,40 @@ bool WasmGcObject::obj_getProperty(JSContext* cx, HandleObject obj,
 
   // Enable direct property access to WASM GC struct fields from JavaScript
   Rooted<WasmGcObject*> gcObj(cx, &obj->as<WasmGcObject>());
+
+  // Handle special properties: toString and valueOf for primitive conversion
+  if (id.isString()) {
+    JSLinearString* str = id.toLinearString();
+    if (str) {
+      JS::UniqueChars chars = JS_EncodeStringToUTF8(cx, JS::RootedString(cx, str));
+      if (chars) {
+        // Intercept toString to return a string representation
+        if (strcmp(chars.get(), "toString") == 0) {
+          fprintf(stderr, "[WASM-GC-DEBUG] Intercepting toString property\n");
+          JSFunction* toStringFunc = JS_NewFunction(cx, [](JSContext* cx, unsigned argc, JS::Value* vp) -> bool {
+            JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
+            // Return a string like "[WasmGcStruct]" or include first field value
+            JSString* result = JS_NewStringCopyZ(cx, "[WasmGcStruct]");
+            if (!result) return false;
+            args.rval().setString(result);
+            return true;
+          }, 0, 0, "toString");
+          if (!toStringFunc) return false;
+          vp.setObject(*JS_GetFunctionObject(toStringFunc));
+          return true;
+        }
+
+        // Intercept valueOf to return first field value for primitive conversion
+        if (strcmp(chars.get(), "valueOf") == 0) {
+          fprintf(stderr, "[WASM-GC-DEBUG] Intercepting valueOf property\n");
+          // Return undefined to fall back to toString
+          vp.setUndefined();
+          return true;
+        }
+      }
+    }
+  }
+
   PropOffset offset;
   StorageType type;
 
