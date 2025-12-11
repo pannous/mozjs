@@ -755,9 +755,16 @@ WASM_DECLARE_CACHEABLE_POD(Name);
 
 using NameVector = Vector<Name, 0, SystemAllocPolicy>;
 
+// Field names for a single type: maps field index -> field name
+using FieldNameMap = HashMap<uint32_t, Name, DefaultHasher<uint32_t>, SystemAllocPolicy>;
+
+// Type field names: maps type index -> field names for that type
+using TypeFieldNamesMap = HashMap<uint32_t, FieldNameMap, DefaultHasher<uint32_t>, SystemAllocPolicy>;
+
 struct NameSection {
   Name moduleName;
   NameVector funcNames;
+  TypeFieldNamesMap fieldNames;  // Field names organized by type index
   uint32_t customSectionIndex;
 
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
