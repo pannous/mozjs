@@ -1129,7 +1129,7 @@ static const char NameSectionName[] = "name";
 static const char SourceMappingURLSectionName[] = "sourceMappingURL";
 static const char BranchHintingSectionName[] = "metadata.code.branch_hint";
 
-enum class NameType { Module = 0, Function = 1, Local = 2 };
+enum class NameType { Module = 0, Function = 1, Local = 2, Type = 4, Field = 10 };
 
 enum class FieldFlags { Mutable = 0x01, AllowedMask = 0x01 };
 
