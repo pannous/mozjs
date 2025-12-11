@@ -4384,6 +4384,12 @@ bool wasm::DecodeModuleTail(Decoder& d, CodeMetadata* codeMeta,
     return false;
   }
 
+  // After decoding the name section, set the CodeMetadata pointer on all
+  // TypeDefs so they can access field names from the name section
+  for (uint32_t i = 0; i < codeMeta->types->length(); i++) {
+    const_cast<TypeDef&>((*codeMeta->types)[i]).setCodeMeta(codeMeta.get());
+  }
+
   while (!d.done()) {
     if (!d.skipCustomSection(codeMeta)) {
       return false;
