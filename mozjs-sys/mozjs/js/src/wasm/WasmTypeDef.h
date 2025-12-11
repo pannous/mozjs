@@ -605,6 +605,12 @@ class TypeDef {
   uint16_t subTypingDepth_;
   bool isFinal_;
   TypeDefKind kind_;
+
+  // Pointer to CodeMetadata for accessing name section field names
+  // This is set when the module is instantiated and provides access to
+  // field names from the WASM name section
+  const CodeMetadata* codeMeta_;
+
   union {
     FuncType funcType_;
     StructType structType_;
@@ -626,7 +632,8 @@ class TypeDef {
         superTypeDef_(nullptr),
         subTypingDepth_(0),
         isFinal_(true),
-        kind_(TypeDefKind::None) {
+        kind_(TypeDefKind::None),
+        codeMeta_(nullptr) {
     setRecGroup(recGroup);
   }
 
@@ -671,6 +678,12 @@ class TypeDef {
 
   void setSuperTypeVector(const SuperTypeVector* superTypeVector) {
     superTypeVector_ = superTypeVector;
+  }
+
+  const CodeMetadata* codeMeta() const { return codeMeta_; }
+
+  void setCodeMeta(const CodeMetadata* codeMeta) {
+    codeMeta_ = codeMeta;
   }
 
   static size_t offsetOfKind() { return offsetof(TypeDef, kind_); }
