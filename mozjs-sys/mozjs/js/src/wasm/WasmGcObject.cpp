@@ -25,6 +25,8 @@
 #include "vm/StringType.h"
 #include "vm/TypedArrayObject.h"
 #include "vm/Uint8Clamped.h"
+#include "wasm/WasmCodeMetadata.h"  // CodeMetadata, NameSection
+#include "wasm/WasmModuleTypes.h"   // TypeFieldNamesMap, FieldNameMap, Name
 
 #include "gc/GCContext-inl.h"  // GCContext::removeCellMemory
 #include "gc/ObjectKind-inl.h"
@@ -409,23 +411,88 @@ bool WasmGcObject::lookUpProperty(JSContext* cx, Handle<WasmGcObject*> obj,
         fprintf(stderr, "[WASM-GC-DEBUG] Approach 1: IdIsIndex succeeded, index=%u\n", index);
       } else if (id.isString()) {
         fprintf(stderr, "[WASM-GC-DEBUG] Approach 2: Trying string parsing\n");
-        // Approach 2: String property like "0", "1", etc.
+        // Approach 2: String property - could be numeric ("0", "1") or field name ("val", "x")
         JSLinearString* str = id.toLinearString();
         if (!str) {
           return false;
         }
-        // Try to parse the string as a number
+
         JS::UniqueChars chars = JS_EncodeStringToUTF8(cx, JS::RootedString(cx, str));
         if (!chars) {
           return false;
         }
+
+        // First try to parse as numeric index
         char* end;
         long parsed = strtol(chars.get(), &end, 10);
-        if (*end != '\0' || parsed < 0) {
-          return false;  // Not a valid index
+        if (*end == '\0' && parsed >= 0) {
+          // Successfully parsed as numeric index
+          index = static_cast<uint32_t>(parsed);
+          fprintf(stderr, "[WASM-GC-DEBUG] Approach 2: String parsing succeeded, index=%u\n", index);
+        } else {
+          // Not a numeric index - try to match field name from name section
+          fprintf(stderr, "[WASM-GC-DEBUG] Approach 2b: Trying field name lookup for '%s'\n", chars.get());
+
+          // Get the CodeMetadata from TypeDef to access field names
+          const CodeMetadata* codeMeta = obj->typeDef().codeMeta();
+          if (!codeMeta || !codeMeta->nameSection) {
+            fprintf(stderr, "[WASM-GC-DEBUG] No CodeMetadata or name section available\n");
+            return false;
+          }
+
+          // Get the type index for this object's type
+          // We need to find which type index this TypeDef corresponds to
+          uint32_t typeIndex = UINT32_MAX;
+          for (uint32_t i = 0; i < codeMeta->types->length(); i++) {
+            if (&(*codeMeta->types)[i] == &obj->typeDef()) {
+              typeIndex = i;
+              break;
+            }
+          }
+
+          if (typeIndex == UINT32_MAX) {
+            fprintf(stderr, "[WASM-GC-DEBUG] Could not find type index for TypeDef\n");
+            return false;
+          }
+
+          fprintf(stderr, "[WASM-GC-DEBUG] Found type index: %u\n", typeIndex);
+
+          // Look up field names for this type
+          const TypeFieldNamesMap& fieldNamesMap = codeMeta->nameSection->fieldNames;
+          auto typeFieldNamesPtr = fieldNamesMap.lookup(typeIndex);
+          if (!typeFieldNamesPtr) {
+            fprintf(stderr, "[WASM-GC-DEBUG] No field names for type %u\n", typeIndex);
+            return false;
+          }
+
+          const FieldNameMap& fieldNames = typeFieldNamesPtr->value();
+          fprintf(stderr, "[WASM-GC-DEBUG] Type %u has %zu field names\n", typeIndex, fieldNames.count());
+
+          // Search for matching field name
+          bool found = false;
+          for (auto iter = fieldNames.iter(); !iter.done(); iter.next()) {
+            uint32_t fieldIdx = iter.get().key();
+            const Name& fieldName = iter.get().value();
+
+            // Get the actual field name string from the name payload
+            const CustomSectionRange& nameSection = codeMeta->customSectionRanges[codeMeta->nameSection->customSectionIndex];
+            const uint8_t* nameBytes = nameSection.payload.begin() + fieldName.offsetInNamePayload;
+
+            // Compare field name with the property name
+            if (fieldName.length == strlen(chars.get()) &&
+                memcmp(nameBytes, chars.get(), fieldName.length) == 0) {
+              index = fieldIdx;
+              found = true;
+              fprintf(stderr, "[WASM-GC-DEBUG] Matched field name '%s' to index %u\n", chars.get(), index);
+              break;
+            }
+          }
+
+          if (!found) {
+            fprintf(stderr, "[WASM-GC-DEBUG] Field name '%s' not found\n", chars.get());
+            return false;
+          }
         }
-        index = static_cast<uint32_t>(parsed);
-        fprintf(stderr, "[WASM-GC-DEBUG] Approach 2: String parsing succeeded, index=%u\n", index);
       } else {
         // Approach 3: Try converting the id to a value and then to uint32
         fprintf(stderr, "[WASM-GC-DEBUG] Approach 3: Trying JS::ToUint32\n");
