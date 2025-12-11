@@ -4242,6 +4242,95 @@ static bool DecodeFunctionNameSubsection(Decoder& d,
   return true;
 }
 
+static bool DecodeFieldNameSubsection(Decoder& d,
+                                      const CustomSectionRange& nameSection,
+                                      CodeMetadata* codeMeta,
+                                      ModuleMetadata* moduleMeta) {
+  Maybe<uint32_t> endOffset;
+  if (!d.startNameSubsection(NameType::Field, &endOffset)) {
+    return false;
+  }
+  if (!endOffset) {
+    return true;
+  }
+
+  // Field name subsection format:
+  // vec(indirect_name_assoc) where each entry is:
+  //   typeidx: u32
+  //   vec(name_assoc) where each entry is:
+  //     fieldidx: u32
+  //     name: (length: u32, bytes: length bytes)
+
+  uint32_t typeCount = 0;
+  if (!d.readVarU32(&typeCount)) {
+    return d.fail("failed to read type count in field name subsection");
+  }
+
+  TypeFieldNamesMap fieldNames;
+
+  for (uint32_t i = 0; i < typeCount; ++i) {
+    uint32_t typeIndex = 0;
+    if (!d.readVarU32(&typeIndex)) {
+      return d.fail("unable to read type index in field names");
+    }
+
+    // Type index must be valid
+    if (typeIndex >= codeMeta->types->length()) {
+      return d.fail("invalid type index in field names");
+    }
+
+    uint32_t fieldCount = 0;
+    if (!d.readVarU32(&fieldCount)) {
+      return d.fail("failed to read field count for type");
+    }
+
+    FieldNameMap typeFieldNames;
+
+    for (uint32_t j = 0; j < fieldCount; ++j) {
+      uint32_t fieldIndex = 0;
+      if (!d.readVarU32(&fieldIndex)) {
+        return d.fail("unable to read field index");
+      }
+
+      Name fieldName;
+      if (!d.readVarU32(&fieldName.length) ||
+          fieldName.length > JS::MaxStringLength) {
+        return d.fail("unable to read field name length");
+      }
+
+      if (!fieldName.length) {
+        continue;
+      }
+
+      MOZ_ASSERT(d.currentOffset() >= nameSection.payload.start);
+      fieldName.offsetInNamePayload =
+          d.currentOffset() - nameSection.payload.start;
+
+      if (!d.readBytes(fieldName.length)) {
+        return d.fail("unable to read field name bytes");
+      }
+
+      // Store field name in the map
+      if (!typeFieldNames.put(fieldIndex, fieldName)) {
+        return false;
+      }
+    }
+
+    // Store this type's field names in the overall map
+    if (!fieldNames.put(typeIndex, std::move(typeFieldNames))) {
+      return false;
+    }
+  }
+
+  if (!d.finishNameSubsection(*endOffset)) {
+    return false;
+  }
+
+  // Only save field names if the entire subsection decoded correctly
+  codeMeta->nameSection->fieldNames = std::move(fieldNames);
+  return true;
+}
+
 static bool DecodeNameSection(Decoder& d, CodeMetadata* codeMeta,
                               ModuleMetadata* moduleMeta) {
   MaybeBytecodeRange range;
@@ -4265,6 +4354,10 @@ static bool DecodeNameSection(Decoder& d, CodeMetadata* codeMeta,
   }
 
   if (!DecodeFunctionNameSubsection(d, nameSection, codeMeta, moduleMeta)) {
+    goto finish;
+  }
+
+  if (!DecodeFieldNameSubsection(d, nameSection, codeMeta, moduleMeta)) {
     goto finish;
   }
 
