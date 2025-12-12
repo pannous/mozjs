@@ -445,6 +445,8 @@ class alignas(16) Instance {
   WasmStructObject* constantStructNewDefault(JSContext* cx, uint32_t typeIndex);
   WasmArrayObject* constantArrayNewDefault(JSContext* cx, uint32_t typeIndex,
                                            uint32_t numElements);
+  const DataSegment* getPassiveDataSegment(uint32_t index) const;
+  size_t passiveDataSegmentCount() const;
 
   // Return the name associated with a given function index, or generate one
   // if none was given by the module.

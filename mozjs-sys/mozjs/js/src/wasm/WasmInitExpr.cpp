@@ -18,6 +18,7 @@
 
 #include "wasm/WasmInitExpr.h"
 
+#include "mozilla/CheckedInt.h"
 #include "mozilla/Maybe.h"
 
 #include "js/Value.h"
@@ -29,6 +30,7 @@
 #include "wasm/WasmUtility.h"
 #include "wasm/WasmValidate.h"
 
+#include "wasm/WasmGcObject-inl.h"
 #include "wasm/WasmInstance-inl.h"
 
 using namespace js;
@@ -208,10 +210,10 @@ class MOZ_STACK_CLASS InitExprInterpreter {
     uint32_t numElements = popI32();
     uint32_t segByteOffset = popI32();
 
-    // Get the data segment
-    MOZ_RELEASE_ASSERT(dataIndex < instance().passiveDataSegments_.length(),
+    // Get the data segment using the public accessor
+    MOZ_RELEASE_ASSERT(dataIndex < instance().passiveDataSegmentCount(),
                        "ensured by validation");
-    const DataSegment* seg = instance().passiveDataSegments_[dataIndex];
+    const DataSegment* seg = instance().getPassiveDataSegment(dataIndex);
 
     // Check if segment is valid
     if (!seg && (numElements != 0 || segByteOffset != 0)) {
@@ -227,10 +229,20 @@ class MOZ_STACK_CLASS InitExprInterpreter {
 
     // Copy data from segment if non-empty
     if (seg && numElements > 0) {
-      if (!Instance::ArrayCopyFromData(cx, arrayObj, 0, seg, segByteOffset,
-                                       numElements)) {
-        return false;
+      uint32_t elemSize = arrayObj->typeDef().arrayType().elementType().size();
+
+      // Check bounds for the copy operation
+      mozilla::CheckedUint32 numBytesReqd = mozilla::CheckedUint32(numElements) * mozilla::CheckedUint32(elemSize);
+      mozilla::CheckedUint32 lastByteOffset = mozilla::CheckedUint32(segByteOffset) + numBytesReqd;
+      mozilla::CheckedUint32 numBytesAvailable(seg->bytes.length());
+
+      if (!numBytesReqd.isValid() || !lastByteOffset.isValid() ||
+          !numBytesAvailable.isValid() || lastByteOffset.value() > numBytesAvailable.value()) {
+        return false; // Out of bounds
       }
+
+      // Copy the data
+      memcpy(arrayObj->data_, seg->bytes.begin() + segByteOffset, numBytesReqd.value());
     }
 
     const TypeDef& typeDef = instance().codeMeta().types->type(typeIndex);
@@ -631,6 +643,13 @@ bool wasm::DecodeConstantExpression(Decoder& d, CodeMetadata* codeMeta,
           case uint32_t(GcOp::ArrayNewDefault): {
             uint32_t typeIndex;
             if (!iter.readArrayNewDefault(&typeIndex, &nothing)) {
+              return false;
+            }
+            break;
+          }
+          case uint32_t(GcOp::ArrayNewData): {
+            uint32_t typeIndex, dataIndex;
+            if (!iter.readArrayNewData(&typeIndex, &dataIndex, &nothing, &nothing)) {
               return false;
             }
             break;

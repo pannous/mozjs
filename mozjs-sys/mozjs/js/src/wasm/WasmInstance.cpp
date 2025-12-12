@@ -3913,6 +3913,15 @@ WasmArrayObject* Instance::constantArrayNewDefault(JSContext* cx,
                                             gc::Heap::Tenured, numElements);
 }
 
+const DataSegment* Instance::getPassiveDataSegment(uint32_t index) const {
+  MOZ_ASSERT(index < passiveDataSegments_.length());
+  return passiveDataSegments_[index];
+}
+
+size_t Instance::passiveDataSegmentCount() const {
+  return passiveDataSegments_.length();
+}
+
 JSAtom* Instance::getFuncDisplayAtom(JSContext* cx, uint32_t funcIndex) const {
   // The "display name" of a function is primarily shown in Error.stack which
   // also includes location, so use getFuncNameBeforeLocation.
