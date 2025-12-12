@@ -4341,10 +4341,9 @@ static bool DecodeNameSection(Decoder& d, CodeMetadata* codeMeta,
     return true;
   }
 
-  codeMeta->nameSection.emplace((NameSection){
-      .customSectionIndex =
-          uint32_t(codeMeta->customSectionRanges.length() - 1),
-  });
+  NameSection nameSec;
+  nameSec.customSectionIndex = uint32_t(codeMeta->customSectionRanges.length() - 1);
+  codeMeta->nameSection.emplace(std::move(nameSec));
   const CustomSectionRange& nameSection = codeMeta->customSectionRanges.back();
 
   // Once started, custom sections do not report validation errors.
@@ -4387,7 +4386,7 @@ bool wasm::DecodeModuleTail(Decoder& d, CodeMetadata* codeMeta,
   // After decoding the name section, set the CodeMetadata pointer on all
   // TypeDefs so they can access field names from the name section
   for (uint32_t i = 0; i < codeMeta->types->length(); i++) {
-    const_cast<TypeDef&>((*codeMeta->types)[i]).setCodeMeta(codeMeta.get());
+    const_cast<TypeDef&>((*codeMeta->types)[i]).setCodeMeta(codeMeta);
   }
 
   while (!d.done()) {

@@ -25,7 +25,7 @@
 #include "vm/StringType.h"
 #include "vm/TypedArrayObject.h"
 #include "vm/Uint8Clamped.h"
-#include "wasm/WasmCodeMetadata.h"  // CodeMetadata, NameSection
+#include "wasm/WasmMetadata.h"  // CodeMetadata, NameSection
 #include "wasm/WasmModuleTypes.h"   // TypeFieldNamesMap, FieldNameMap, Name
 
 #include "gc/GCContext-inl.h"  // GCContext::removeCellMemory
@@ -177,7 +177,6 @@ const ObjectOps WasmGcObject::objectOps_ = {
 bool WasmGcObject::obj_lookupProperty(JSContext* cx, HandleObject obj,
                                       HandleId id, MutableHandleObject objp,
                                       PropertyResult* propp) {
-  fprintf(stderr, "[WASM-GC-DEBUG] obj_lookupProperty CALLED!\n");
 
   // Check if this is a valid field index for the GC object
   Rooted<WasmGcObject*> gcObj(cx, &obj->as<WasmGcObject>());
@@ -186,14 +185,12 @@ bool WasmGcObject::obj_lookupProperty(JSContext* cx, HandleObject obj,
 
   if (lookUpProperty(cx, gcObj, id, &offset, &type)) {
     // Property exists - mark as computed/proxy property
-    fprintf(stderr, "[WASM-GC-DEBUG] obj_lookupProperty: Property FOUND, setting as proxy property\n");
     objp.set(obj);
     propp->setProxyProperty();
     return true;
   }
 
   // Property not found
-  fprintf(stderr, "[WASM-GC-DEBUG] obj_lookupProperty: Property NOT FOUND\n");
   objp.set(nullptr);
   propp->setNotFound();
   return true;
@@ -221,7 +218,6 @@ bool WasmGcObject::obj_hasProperty(JSContext* cx, HandleObject obj, HandleId id,
 bool WasmGcObject::obj_getProperty(JSContext* cx, HandleObject obj,
                                    HandleValue receiver, HandleId id,
                                    MutableHandleValue vp) {
-  fprintf(stderr, "[WASM-GC-DEBUG] obj_getProperty CALLED!\n");
 
   // Enable direct property access to WASM GC struct fields from JavaScript
   Rooted<WasmGcObject*> gcObj(cx, &obj->as<WasmGcObject>());
@@ -234,7 +230,6 @@ bool WasmGcObject::obj_getProperty(JSContext* cx, HandleObject obj,
       if (chars) {
         // Intercept toString to return a string representation
         if (strcmp(chars.get(), "toString") == 0) {
-          fprintf(stderr, "[WASM-GC-DEBUG] Intercepting toString property\n");
           JSFunction* toStringFunc = JS_NewFunction(cx, [](JSContext* cx, unsigned argc, JS::Value* vp) -> bool {
             JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
             // Return a string like "[WasmGcStruct]" or include first field value
@@ -250,7 +245,6 @@ bool WasmGcObject::obj_getProperty(JSContext* cx, HandleObject obj,
 
         // Intercept valueOf to return first field value for primitive conversion
         if (strcmp(chars.get(), "valueOf") == 0) {
-          fprintf(stderr, "[WASM-GC-DEBUG] Intercepting valueOf property\n");
           // Return undefined to fall back to toString
           vp.setUndefined();
           return true;
@@ -404,13 +398,10 @@ bool WasmGcObject::lookUpProperty(JSContext* cx, Handle<WasmGcObject*> obj,
       // 2. Convert to string and parse - for string property names like "0"
       // 3. Try JS::ToUint32 - for general value conversion
 
-      fprintf(stderr, "[WASM-GC-DEBUG] lookUpProperty called for struct\n");
 
       if (IdIsIndex(id, &index)) {
         // Approach 1: Direct numeric index
-        fprintf(stderr, "[WASM-GC-DEBUG] Approach 1: IdIsIndex succeeded, index=%u\n", index);
       } else if (id.isString()) {
-        fprintf(stderr, "[WASM-GC-DEBUG] Approach 2: Trying string parsing\n");
         // Approach 2: String property - could be numeric ("0", "1") or field name ("val", "x")
         JSLinearString* str = id.toLinearString();
         if (!str) {
@@ -428,15 +419,12 @@ bool WasmGcObject::lookUpProperty(JSContext* cx, Handle<WasmGcObject*> obj,
         if (*end == '\0' && parsed >= 0) {
           // Successfully parsed as numeric index
           index = static_cast<uint32_t>(parsed);
-          fprintf(stderr, "[WASM-GC-DEBUG] Approach 2: String parsing succeeded, index=%u\n", index);
         } else {
           // Not a numeric index - try to match field name from name section
-          fprintf(stderr, "[WASM-GC-DEBUG] Approach 2b: Trying field name lookup for '%s'\n", chars.get());
 
           // Get the CodeMetadata from TypeDef to access field names
           const CodeMetadata* codeMeta = obj->typeDef().codeMeta();
           if (!codeMeta || !codeMeta->nameSection) {
-            fprintf(stderr, "[WASM-GC-DEBUG] No CodeMetadata or name section available\n");
             return false;
           }
 
@@ -451,22 +439,18 @@ bool WasmGcObject::lookUpProperty(JSContext* cx, Handle<WasmGcObject*> obj,
           }
 
           if (typeIndex == UINT32_MAX) {
-            fprintf(stderr, "[WASM-GC-DEBUG] Could not find type index for TypeDef\n");
             return false;
           }
 
-          fprintf(stderr, "[WASM-GC-DEBUG] Found type index: %u\n", typeIndex);
 
           // Look up field names for this type
           const TypeFieldNamesMap& fieldNamesMap = codeMeta->nameSection->fieldNames;
           auto typeFieldNamesPtr = fieldNamesMap.lookup(typeIndex);
           if (!typeFieldNamesPtr) {
-            fprintf(stderr, "[WASM-GC-DEBUG] No field names for type %u\n", typeIndex);
             return false;
           }
 
           const FieldNameMap& fieldNames = typeFieldNamesPtr->value();
-          fprintf(stderr, "[WASM-GC-DEBUG] Type %u has %zu field names\n", typeIndex, fieldNames.count());
 
           // Search for matching field name
           bool found = false;
@@ -475,40 +459,32 @@ bool WasmGcObject::lookUpProperty(JSContext* cx, Handle<WasmGcObject*> obj,
             const Name& fieldName = iter.get().value();
 
             // Get the actual field name string from the name payload
-            const CustomSectionRange& nameSection = codeMeta->customSectionRanges[codeMeta->nameSection->customSectionIndex];
-            const uint8_t* nameBytes = nameSection.payload.begin() + fieldName.offsetInNamePayload;
+            const uint8_t* nameBytes = codeMeta->nameSectionPayload->begin() + fieldName.offsetInNamePayload;
 
             // Compare field name with the property name
             if (fieldName.length == strlen(chars.get()) &&
                 memcmp(nameBytes, chars.get(), fieldName.length) == 0) {
               index = fieldIdx;
               found = true;
-              fprintf(stderr, "[WASM-GC-DEBUG] Matched field name '%s' to index %u\n", chars.get(), index);
               break;
             }
           }
 
           if (!found) {
-            fprintf(stderr, "[WASM-GC-DEBUG] Field name '%s' not found\n", chars.get());
             return false;
           }
         }
       } else {
         // Approach 3: Try converting the id to a value and then to uint32
-        fprintf(stderr, "[WASM-GC-DEBUG] Approach 3: Trying JS::ToUint32\n");
         JS::RootedValue idVal(cx);
         if (!JS_IdToValue(cx, id, &idVal)) {
-          fprintf(stderr, "[WASM-GC-DEBUG] Approach 3: JS_IdToValue failed\n");
           return false;
         }
         if (!JS::ToUint32(cx, idVal, &index)) {
-          fprintf(stderr, "[WASM-GC-DEBUG] Approach 3: JS::ToUint32 failed\n");
           return false;
         }
-        fprintf(stderr, "[WASM-GC-DEBUG] Approach 3: JS::ToUint32 succeeded, index=%u\n", index);
       }
 
-      fprintf(stderr, "[WASM-GC-DEBUG] Final index=%u, fields_.length()=%zu\n", index, structType.fields_.length());
 
       if (index >= structType.fields_.length()) {
         JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
@@ -625,7 +601,6 @@ bool WasmGcObject::isRuntimeSubtypeOf(
 bool WasmGcObject::obj_newEnumerate(JSContext* cx, HandleObject obj,
                                     MutableHandleIdVector properties,
                                     bool enumerableOnly) {
-  fprintf(stderr, "[WASM-GC-DEBUG] obj_newEnumerate CALLED!\n");
   fflush(stderr);
 
   // Enumerate struct fields as numeric indices
@@ -636,7 +611,6 @@ bool WasmGcObject::obj_newEnumerate(JSContext* cx, HandleObject obj,
     const wasm::StructType& structType = structObj.typeDef().structType();
     uint32_t numFields = structType.fields_.length();
 
-    fprintf(stderr, "[WASM-GC-DEBUG] Enumerating %u struct fields\n", numFields);
     fflush(stderr);
 
     // Add each field index as a property
@@ -644,7 +618,6 @@ bool WasmGcObject::obj_newEnumerate(JSContext* cx, HandleObject obj,
       if (!properties.append(PropertyKey::Int(i))) {
         return false;
       }
-      fprintf(stderr, "[WASM-GC-DEBUG] Added property index %u\n", i);
       fflush(stderr);
     }
     return true;
@@ -654,7 +627,6 @@ bool WasmGcObject::obj_newEnumerate(JSContext* cx, HandleObject obj,
     const WasmArrayObject& arrayObj = gcObj->as<WasmArrayObject>();
     uint32_t numElements = arrayObj.numElements_;
 
-    fprintf(stderr, "[WASM-GC-DEBUG] Enumerating %u array elements\n", numElements);
     fflush(stderr);
 
     // Add each element index as a property

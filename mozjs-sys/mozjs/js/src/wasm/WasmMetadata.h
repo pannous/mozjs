@@ -107,6 +107,9 @@ struct CodeMetadata : public ShareableBase<CodeMetadata> {
   // Name section information
   mozilla::Maybe<NameSection> nameSection;
 
+  // Name section payload bytes for field name lookups at runtime
+  mutable SharedBytes nameSectionPayload;
+
   // Bytecode ranges for custom sections.
   CustomSectionRangeVector customSectionRanges;
 

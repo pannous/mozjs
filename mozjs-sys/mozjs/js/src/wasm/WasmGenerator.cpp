@@ -1368,9 +1368,11 @@ SharedModule ModuleGenerator::finishModule(
 
   // Store a reference to the name section on the code metadata
   if (codeMeta_->nameSection) {
-    codeTailMeta->nameSectionPayload =
+    SharedBytes payload =
         moduleMeta.customSections[codeMeta_->nameSection->customSectionIndex]
             .payload;
+    codeTailMeta->nameSectionPayload = payload;
+    codeMeta_->nameSectionPayload = payload;
   } else {
     MOZ_ASSERT(codeTailMeta->nameSectionPayload == nullptr);
   }
