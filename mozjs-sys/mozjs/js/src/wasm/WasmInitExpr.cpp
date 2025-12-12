@@ -203,6 +203,41 @@ class MOZ_STACK_CLASS InitExprInterpreter {
                    AnyRef::fromJSObject(*arrayObj));
   }
 
+  bool evalArrayNewData(JSContext* cx, uint32_t typeIndex,
+                        uint32_t dataIndex) {
+    uint32_t numElements = popI32();
+    uint32_t segByteOffset = popI32();
+
+    // Get the data segment
+    MOZ_RELEASE_ASSERT(dataIndex < instance().passiveDataSegments_.length(),
+                       "ensured by validation");
+    const DataSegment* seg = instance().passiveDataSegments_[dataIndex];
+
+    // Check if segment is valid
+    if (!seg && (numElements != 0 || segByteOffset != 0)) {
+      return false; // Out of bounds
+    }
+
+    // Create the array
+    Rooted<WasmArrayObject*> arrayObj(
+        cx, instance().constantArrayNewDefault(cx, typeIndex, numElements));
+    if (!arrayObj) {
+      return false;
+    }
+
+    // Copy data from segment if non-empty
+    if (seg && numElements > 0) {
+      if (!Instance::ArrayCopyFromData(cx, arrayObj, 0, seg, segByteOffset,
+                                       numElements)) {
+        return false;
+      }
+    }
+
+    const TypeDef& typeDef = instance().codeMeta().types->type(typeIndex);
+    return pushRef(RefType::fromTypeDef(&typeDef, false),
+                   AnyRef::fromJSObject(*arrayObj));
+  }
+
   bool evalArrayNewFixed(JSContext* cx, uint32_t typeIndex,
                          uint32_t numElements) {
     Rooted<WasmArrayObject*> arrayObj(
@@ -393,6 +428,16 @@ bool InitExprInterpreter::evaluate(JSContext* cx, Decoder& d) {
               return false;
             }
             CHECK(evalArrayNewDefault(cx, typeIndex));
+          }
+          case uint32_t(GcOp::ArrayNewData): {
+            uint32_t typeIndex, dataIndex;
+            if (!d.readTypeIndex(&typeIndex)) {
+              return false;
+            }
+            if (!d.readVarU32(&dataIndex)) {
+              return false;
+            }
+            CHECK(evalArrayNewData(cx, typeIndex, dataIndex));
           }
           case uint32_t(GcOp::RefI31): {
             CHECK(evalI31New(cx));
